@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>إدارة مخولين مكتب النائب</title>
+<meta name="theme-color" content="#123A63">
+<meta name="description" content="نظام إدارة المخولين والمهام لمكتب النائب">
+
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icons/icon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="/icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="مخولي المكتب">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="msapplication-TileColor" content="#123A63">
+<meta name="msapplication-TileImage" content="/icons/icon-192.png">
+
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<div id="toast" class="toast"></div>
+
+<!-- شاشة الدخول -->
+<div id="loginScreen" class="screen login-screen">
+  <div class="login-card">
+    <div class="brand">
+      <img src="/icons/icon-192.png" alt="شعار التطبيق" class="brand-logo">
+      <h1>إدارة مخولين مكتب النائب</h1>
+      <p class="muted">تسجيل الدخول للمتابعة</p>
+    </div>
+    <form id="loginForm">
+      <label>اسم المستخدم</label>
+      <input type="text" id="loginUsername" required autocomplete="username">
+      <label>كلمة المرور</label>
+      <input type="password" id="loginPassword" required autocomplete="current-password">
+      <div id="loginError" class="error-text"></div>
+      <button type="submit" class="btn btn-primary btn-block">دخول</button>
+    </form>
+  </div>
+</div>
+
+<!-- التطبيق الرئيسي -->
+<div id="appScreen" class="screen app-screen hidden">
+
+  <header class="topbar">
+    <div class="topbar-left">
+      <img src="/icons/icon-192.png" class="topbar-logo" alt="">
+      <span class="topbar-title">مخولي مكتب النائب</span>
+    </div>
+    <div class="topbar-right">
+      <span id="meName" class="me-name"></span>
+      <button id="changePasswordBtn" class="btn btn-ghost btn-sm">تغيير كلمة المرور</button>
+      <button id="logoutBtn" class="btn btn-ghost btn-sm">خروج</button>
+    </div>
+  </header>
+
+  <nav class="tabbar">
+    <button class="tab-btn active" data-view="home">🏠 الرئيسية</button>
+    <button class="tab-btn" data-view="agents">👥 المخولين</button>
+    <button class="tab-btn" data-view="offices">🏢 المكاتب</button>
+    <button class="tab-btn" data-view="tasks">📋 الطلبات</button>
+    <button class="tab-btn" data-view="overdue">⏰ المتأخرة</button>
+    <button class="tab-btn" data-view="reports">📊 التقارير</button>
+    <button class="tab-btn admin-only" data-view="accounts">🔐 الحسابات</button>
+  </nav>
+
+  <main id="mainContent" class="main-content"></main>
+
+</div>
+
+<!-- نافذة منبثقة عامة -->
+<div id="modalOverlay" class="modal-overlay hidden">
+  <div class="modal-box" id="modalBox"></div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
