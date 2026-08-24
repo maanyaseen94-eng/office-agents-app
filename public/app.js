@@ -30,9 +30,64 @@ async function api(path, { method = 'GET', body, isForm = false } = {}) {
   }
   const res = await fetch('/api' + path, opts);
   let data = {};
-  try { data = await res.json(); } catch (e) { /* ignore */ }
-  if (!res.ok) throw new Error(data.error || 'حدث خطأ غير متوقع');
+  let parseFailed = false;
+  try { data = await res.json(); } catch (e) { parseFailed = true; }
+  if (!res.ok) {
+    if (parseFailed) {
+      // فشل تحويل الرد إلى JSON غالباً يعني أن الطلب رُفض قبل وصوله لكودنا
+      // (مثل تجاوز الحد الأقصى لحجم الملف المسموح به على الاستضافة)
+      throw new Error(res.status === 413 ? 'الملف كبير جداً، جرّب ملفاً أصغر' : 'حدث خطأ غير متوقع (قد يكون الملف المرفق كبيراً جداً)');
+    }
+    throw new Error(data.error || 'حدث خطأ غير متوقع');
+  }
   return data;
+}
+
+// ---------------- ضغط الصور قبل الرفع (لتجنب حدود حجم الطلب على الاستضافة) ----------------
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // يطابق الحد المضبوط في الخادم
+
+// يضغط صورة (تصغير الأبعاد وإعادة الترميز كـ JPEG) إن كانت كبيرة، ويترك أي
+// ملف آخر (PDF، صورة صغيرة أصلاً...) كما هو
+async function compressImageFile(file, maxDim = 1600, quality = 0.8) {
+  if (!file || !file.type || !file.type.startsWith('image/') || file.type === 'image/svg+xml') return file;
+  if (file.size <= 1.2 * 1024 * 1024) return file; // صغيرة أصلاً، لا داعي لإعادة الترميز
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (!blob) return file;
+    const newName = file.name.replace(/\.[^.]+$/, '') + '.jpg';
+    return new File([blob], newName, { type: 'image/jpeg' });
+  } catch (e) {
+    return file; // في حال تعذّر الضغط (متصفح قديم مثلاً) نستخدم الملف الأصلي
+  }
+}
+
+// يضغط أي حقول ملفات صور داخل FormData، ثم يتحقق أن كل الملفات ضمن الحد المسموح
+// يعيد نص خطأ إن تجاوز أحد الملفات الحد (بعد محاولة الضغط)، أو null إن كان كل شيء سليماً
+async function prepareFileFields(fd, fieldNames) {
+  for (const name of fieldNames) {
+    const file = fd.get(name);
+    if (file instanceof File && file.size > 0) {
+      const compressed = await compressImageFile(file);
+      if (compressed !== file) {
+        fd.delete(name);
+        fd.append(name, compressed);
+      }
+      const finalFile = fd.get(name);
+      if (finalFile.size > MAX_UPLOAD_BYTES) {
+        const mb = Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024));
+        return `حجم الملف "${finalFile.name}" كبير جداً — الحد الأقصى ${mb} ميغابايت. جرّب صورة بجودة أقل أو ملفاً أصغر.`;
+      }
+    }
+  }
+  return null;
 }
 
 function fmtDate(d) {
@@ -122,6 +177,10 @@ function applyRoleVisibility() {
   $all('.report-tab-btn').forEach(el => {}); // placeholder
   const reportsTab = $('.tab-btn[data-view="reports"]');
   if (reportsTab) reportsTab.style.display = (state.me.role === 'admin' || state.me.role === 'viewer') ? '' : 'none';
+  // حساب المخوّل لا يرى بيانات المخولين الآخرين، لذا نخفي عنه تبويب "المخولين"
+  // بالكامل (الخادم أيضاً يمنع الوصول لبيانات غيره حتى لو تم استدعاء الـ API مباشرة)
+  const agentsTab = $('.tab-btn[data-view="agents"]');
+  if (agentsTab) agentsTab.style.display = state.me.role === 'agent' ? 'none' : '';
 }
 
 $('#loginForm').addEventListener('submit', async (e) => {
@@ -329,7 +388,7 @@ function openAgentForm(agent = null) {
     <form id="agentForm">
       <div class="form-grid">
         <div class="form-group full">
-          <label>صورة المخوّل</label>
+          <label>صورة المخوّل <span class="muted" style="font-weight:400">(حد أقصى 4MB)</span></label>
           <input type="file" name="photo" accept="image/*">
         </div>
         <div class="form-group">
@@ -373,6 +432,8 @@ function openAgentForm(agent = null) {
     e.preventDefault();
     const fd = new FormData(e.target);
     if (!isEdit) fd.append('role', 'agent');
+    const sizeError = await prepareFileFields(fd, ['photo']);
+    if (sizeError) { $('#agentFormError').textContent = sizeError; return; }
     try {
       if (isEdit) {
         await api(`/users/${agent.id}`, { method: 'PUT', body: fd, isForm: true });
@@ -610,7 +671,7 @@ async function openCreateTaskModal() {
         </div>
 
         <div class="form-group"><label>التاريخ (تاريخ الاستحقاق)</label><input type="date" name="due_date" required></div>
-        <div class="form-group"><label>ارفاق ملف</label><input type="file" name="attachment"></div>
+        <div class="form-group"><label>ارفاق ملف <span class="muted" style="font-weight:400">(حد أقصى 4MB)</span></label><input type="file" name="attachment"></div>
         <div class="form-group full"><label>التفاصيل</label><textarea name="details" rows="4"></textarea></div>
       </div>
       <div id="createTaskError" class="error-text"></div>
@@ -661,6 +722,9 @@ async function openCreateTaskModal() {
     }
     const attachment = fd.get('attachment');
     if (attachment && attachment.size) submitFd.set('attachment', attachment);
+
+    const sizeError = await prepareFileFields(submitFd, ['attachment']);
+    if (sizeError) { $('#createTaskError').textContent = sizeError; return; }
 
     try {
       await api('/tasks', { method: 'POST', body: submitFd, isForm: true });
@@ -734,7 +798,7 @@ function renderStatusUpdateForm(task) {
         <textarea name="rejection_reason" rows="2"></textarea>
       </div>
       <div class="form-group" style="margin-top:10px">
-        <label>إعادة رفع ملف (اختياري)</label>
+        <label>إعادة رفع ملف (اختياري) <span class="muted" style="font-weight:400">(حد أقصى 4MB)</span></label>
         <input type="file" name="attachment">
       </div>
       <input type="hidden" name="status" value="">
@@ -769,6 +833,8 @@ function wireStatusUpdateForm(task) {
       $('#statusFormError').textContent = 'يرجى ذكر سبب الرفض';
       return;
     }
+    const sizeError = await prepareFileFields(fd, ['attachment']);
+    if (sizeError) { $('#statusFormError').textContent = sizeError; return; }
     try {
       await api(`/tasks/${task.id}/status`, { method: 'PUT', body: fd, isForm: true });
       toast('تم تحديث حالة المهمة');
@@ -811,7 +877,7 @@ async function openEditTaskModal(task) {
           <input type="date" name="due_date" required value="${task.due_date}">
         </div>
         <div class="form-group">
-          <label>استبدال المرفق (اختياري)</label>
+          <label>استبدال المرفق (اختياري) <span class="muted" style="font-weight:400">(حد أقصى 4MB)</span></label>
           <input type="file" name="attachment">
         </div>
         <div class="form-group full">
@@ -830,6 +896,8 @@ async function openEditTaskModal(task) {
   $('#editTaskForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const sizeError = await prepareFileFields(fd, ['attachment']);
+    if (sizeError) { $('#editTaskError').textContent = sizeError; return; }
     try {
       await api(`/tasks/${task.id}`, { method: 'PUT', body: fd, isForm: true });
       toast('تم حفظ التعديلات');
@@ -996,7 +1064,7 @@ function openAccountForm(user = null) {
     <form id="accountForm">
       <div class="form-grid">
         <div class="form-group full">
-          <label>صورة (اختياري)</label>
+          <label>صورة (اختياري) <span class="muted" style="font-weight:400">(حد أقصى 4MB)</span></label>
           <input type="file" name="photo" accept="image/*">
         </div>
         <div class="form-group">
@@ -1049,6 +1117,8 @@ function openAccountForm(user = null) {
   $('#accountForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const sizeError = await prepareFileFields(fd, ['photo']);
+    if (sizeError) { $('#accountFormError').textContent = sizeError; return; }
     try {
       if (isEdit) {
         await api(`/users/${user.id}`, { method: 'PUT', body: fd, isForm: true });

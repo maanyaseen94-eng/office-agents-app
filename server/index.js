@@ -18,7 +18,12 @@ const PORT = process.env.PORT || 3000;
 // لا يوجد قرص دائم يمكن الكتابة عليه على الاستضافة اللا-خادمية (Vercel)، لذا
 // تُستقبل الملفات في الذاكرة مؤقتاً ثم تُحفظ داخل جدول files، وتُخدَّم لاحقاً
 // عبر المسار /api/files/:id.
-const memoryUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+// ملاحظة مهمة: Vercel Serverless Functions لها حد أقصى صارم لحجم الطلب الواحد
+// (حوالي 4.5 ميغابايت) لا يمكن تجاوزه بالكود إطلاقاً. لذا نضبط حد multer عند
+// 4 ميغابايت (أقل من حد Vercel) كي يعطي تطبيقنا رسالة خطأ واضحة بدل أن يصطدم
+// الطلب بحد المنصة الصامت.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+const memoryUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES } });
 
 async function saveUploadedFile(file) {
   if (!file) return null;
@@ -135,9 +140,13 @@ app.get('/api/users', requireAuth, requireRole('admin'), ah(async (req, res) => 
   res.json({ users: users.map(publicUser) });
 }));
 
-// قائمة المخولين (يمكن للجميع المصادَق عليهم رؤيتها لأغراض الإسناد والعرض)
+// قائمة المخولين — يراها المسؤول/الموظف/الاطلاع كاملة لأغراض الإسناد والتقارير،
+// أما حساب المخوّل نفسه فلا يرى إلا سجله الخاص (لا يمكنه الاطلاع على بيانات
+// المخولين الآخرين).
 app.get('/api/agents', requireAuth, ah(async (req, res) => {
-  const agents = await db.all("SELECT * FROM users WHERE role = 'agent' AND active = 1 ORDER BY full_name");
+  const agents = req.user.role === 'agent'
+    ? await db.all("SELECT * FROM users WHERE role = 'agent' AND active = 1 AND id = ?", req.user.id)
+    : await db.all("SELECT * FROM users WHERE role = 'agent' AND active = 1 ORDER BY full_name");
   res.json({ agents: agents.map(publicUser) });
 }));
 
@@ -604,10 +613,17 @@ app.get('/api/telegram/status', requireAuth, requireRole('admin'), (req, res) =>
   res.json({ enabled: telegram.isEnabled() });
 });
 
-// معالج أخطاء عام (يلتقط أي خطأ مرَّرته المعالجات async عبر ah())
+// معالج أخطاء عام (يلتقط أي خطأ مرَّرته multer أو المعالجات async عبر ah())
 app.use((err, req, res, next) => {
-  console.error('خطأ غير متوقع:', err);
   if (res.headersSent) return next(err);
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      const mb = Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024));
+      return res.status(400).json({ error: `حجم الملف كبير جداً — الحد الأقصى المسموح به ${mb} ميغابايت` });
+    }
+    return res.status(400).json({ error: 'تعذر رفع الملف: ' + err.message });
+  }
+  console.error('خطأ غير متوقع:', err);
   res.status(500).json({ error: 'حدث خطأ غير متوقع في الخادم' });
 });
 
