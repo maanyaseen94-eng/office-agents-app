@@ -40,6 +40,13 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// خدمة ملف الـ Service Worker بدون أي تخزين مؤقت في المتصفح، كي يكتشف كل
+// جهاز التحديثات الجديدة فوراً بدل الاعتماد على نسخة قديمة محفوظة لديه
+app.get('/service-worker.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(path.join(__dirname, '..', 'public', 'service-worker.js'));
+});
+
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // يلتقط أي خطأ غير متوقع داخل معالج async ويحوّله لاستجابة 500 بدل تعطّل الطلب بصمت
