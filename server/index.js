@@ -279,9 +279,13 @@ app.get('/api/tasks', requireAuth, ah(async (req, res) => {
              LEFT JOIN users ta ON ta.id = t.target_agent_id WHERE 1=1`;
   const params = [];
 
-  if (isPersonAssignableRole(req.user.role)) {
+  if (req.user.role === 'agent') {
     sql += ' AND t.assigned_to = ?';
     params.push(req.user.id);
+  } else if (req.user.role === 'staff') {
+    // موظف المتابعة يرى المهام المسندة إليه، وكذلك المهام التي أضافها بنفسه
+    sql += ' AND (t.assigned_to = ? OR t.created_by = ?)';
+    params.push(req.user.id, req.user.id);
   }
   if (status) { sql += ' AND t.status = ?'; params.push(status); }
   if (assigned_to) { sql += ' AND t.assigned_to = ?'; params.push(Number(assigned_to)); }
@@ -305,15 +309,20 @@ app.get('/api/tasks/:id', requireAuth, ah(async (req, res) => {
     id
   );
   if (!t) return res.status(404).json({ error: 'المهمة غير موجودة' });
-  if (isPersonAssignableRole(req.user.role) && t.assigned_to !== req.user.id) {
+  const canView = req.user.role === 'agent'
+    ? t.assigned_to === req.user.id
+    : req.user.role === 'staff'
+      ? (t.assigned_to === req.user.id || t.created_by === req.user.id)
+      : true;
+  if (!canView) {
     return res.status(403).json({ error: 'لا تملك صلاحية عرض هذه المهمة' });
   }
   const events = await db.all('SELECT * FROM task_events WHERE task_id = ? ORDER BY created_at ASC', id);
   res.json({ task: taskWithMeta(t), events });
 }));
 
-// إنشاء مهمة جديدة (زر "مهام") — للمسؤول الرئيسي
-app.post('/api/tasks', requireAuth, requireRole('admin'), memoryUpload.single('attachment'), ah(async (req, res) => {
+// إنشاء مهمة جديدة (زر "مهام") — للمسؤول الرئيسي وموظف المتابعة
+app.post('/api/tasks', requireAuth, requireRole('admin', 'staff'), memoryUpload.single('attachment'), ah(async (req, res) => {
   const { title, office_name, details, assigned_to, due_date, task_type, target_type, target_agent_id, target_office } = req.body || {};
   if (!title || !office_name || !assigned_to || !due_date) {
     return res.status(400).json({ error: 'عنوان المهمة والمكتب والمخول/الموظف والتاريخ حقول مطلوبة' });
@@ -458,7 +467,9 @@ app.delete('/api/tasks/:id', requireAuth, requireRole('admin'), ah(async (req, r
 // لوحة الإحصائيات
 // =========================================================
 app.get('/api/stats', requireAuth, ah(async (req, res) => {
-  const base = isPersonAssignableRole(req.user.role) ? 'WHERE assigned_to = ' + req.user.id : '';
+  let base = '';
+  if (req.user.role === 'agent') base = 'WHERE assigned_to = ' + req.user.id;
+  else if (req.user.role === 'staff') base = `WHERE (assigned_to = ${req.user.id} OR created_by = ${req.user.id})`;
   const all = await db.all(`SELECT * FROM tasks ${base}`);
   const agentsCountRow = await db.get("SELECT COUNT(*) c FROM users WHERE role = 'agent' AND active = 1");
   const overdueCount = all.filter(t => t.status === 'قيد الانجاز' && t.due_date < today()).length;

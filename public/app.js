@@ -119,6 +119,8 @@ function roleLabel(role) {
 }
 
 function isPersonAssignable(role) { return role === 'agent' || role === 'staff'; }
+// المسؤول الرئيسي وموظف المتابعة يستطيعان إضافة مهام جديدة (المخوّل والاطلاع لا)
+function canCreateTasks(role) { return role === 'admin' || role === 'staff'; }
 
 function taskTypeLabel(t) {
   if (t.task_type === 'متابعة_بريد') return 'متابعة مخول';
@@ -289,7 +291,7 @@ async function renderHome() {
         <div class="dash-card"><div class="icon">✅</div><div class="num">${stats.doneCount}</div><div class="label">منجزة</div></div>
         <div class="dash-card"><div class="icon">🚫</div><div class="num">${stats.rejectedCount}</div><div class="label">مرفوضة</div></div>
       </div>
-      ${state.me.role === 'admin' ? `<div style="text-align:center;margin-top:10px"><button class="btn btn-primary" id="quickAddTaskBtn">＋ إضافة مهمة</button></div>` : ''}
+      ${canCreateTasks(state.me.role) ? `<div style="text-align:center;margin-top:10px"><button class="btn btn-primary" id="quickAddTaskBtn">＋ إضافة مهمة</button></div>` : ''}
     `;
     $all('[data-nav]').forEach(el => el.addEventListener('click', () => setView(el.dataset.nav)));
     const quickBtn = $('#quickAddTaskBtn');
@@ -552,7 +554,7 @@ async function renderTasks(overdueOnly = false) {
   main.innerHTML = `
     <div class="section-header">
       <h2>${overdueOnly ? 'المهام المتأخرة' : 'الطلبات / المهام'}</h2>
-      <button class="btn btn-primary btn-sm admin-only" id="addTaskBtn">＋ إضافة مهمة</button>
+      ${canCreateTasks(state.me.role) ? `<button class="btn btn-primary btn-sm" id="addTaskBtn">＋ إضافة مهمة</button>` : ''}
     </div>
     <div class="filters-bar">
       <select id="filterStatus">
